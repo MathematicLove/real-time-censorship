@@ -8,3 +8,4 @@ docs/
 demo/
 .DS_Store
 notebook/dataset/
+temp/
