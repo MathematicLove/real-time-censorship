@@ -1,0 +1,12 @@
+services:
+  censorship:
+    image: ${IMAGE:-ayzek/real-time-censorship:latest}
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - censorship-data:/srv/data
+
+volumes:
+  censorship-data:

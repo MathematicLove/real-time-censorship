@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Real Time Censorship</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: #16181c; color: #d6d9de; font: 12px -apple-system, Segoe UI, Roboto, sans-serif; }
+.wrap { padding: 14px; }
+.head { display: flex; align-items: flex-start; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid #24272e; }
+.title { font-size: 15px; font-weight: 600; color: #fff; }
+.sub { color: #7d848f; font-size: 11px; margin-top: 2px; }
+.right { text-align: right; }
+.body { display: flex; gap: 12px; margin-top: 12px; align-items: stretch; }
+.stage { flex: 1; min-width: 0; }
+.screen { background: #0b0c0e; border: 1px solid #24272e; height: 62vh; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.screen img { max-width: 100%; max-height: 100%; display: none; }
+.screen span { color: #7d848f; }
+.strip { display: flex; gap: 16px; margin-top: 8px; color: #7d848f; font-size: 11px; }
+.side { width: 310px; flex: none; display: flex; flex-direction: column; gap: 10px; }
+fieldset { border: 1px solid #24272e; padding: 10px; margin: 0; }
+legend { color: #7d848f; font-size: 11px; padding: 0 4px; }
+.row { display: flex; gap: 8px; }
+button { flex: 1; background: #23262d; color: #d6d9de; border: 1px solid #2e323a; padding: 7px 12px; font: inherit; cursor: pointer; }
+button:hover { background: #2b2f37; }
+button.primary { background: #2f6fd0; border-color: #2f6fd0; color: #fff; }
+button.danger { background: #b5432f; border-color: #b5432f; color: #fff; }
+button:disabled { background: #1b1e23; border-color: #24272e; color: #4d525b; cursor: default; }
+label.line { display: flex; align-items: center; gap: 7px; padding: 2px 0; cursor: pointer; }
+input[type=range] { width: 100%; accent-color: #2f6fd0; margin: 4px 0 10px; }
+input[type=number] { width: 60px; background: #1b1e23; border: 1px solid #2e323a; color: #d6d9de; padding: 4px; font: inherit; }
+input[type=checkbox] { accent-color: #2f6fd0; }
+.classes { max-height: 190px; overflow-y: auto; }
+.log { margin-top: 10px; }
+pre { background: #0f1114; border: 1px solid #24272e; color: #9aa1ab; font: 11px Menlo, Consolas, monospace; height: 150px; overflow-y: auto; margin: 6px 0 0; padding: 8px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <div class="title">Real Time Censorship</div>
+      <div class="sub" id="session">loading</div>
+    </div>
+    <div class="right">
+      <div id="device">device</div>
+      <div class="sub" id="store">database</div>
+    </div>
+  </div>
+  <div class="body">
+    <div class="stage">
+      <div class="screen"><img id="feed" alt="live"><span id="placeholder">camera is stopped</span></div>
+      <div class="strip">
+        <span id="fps">fps 0.0</span>
+        <span id="latency">latency 0 ms</span>
+        <span id="persons">persons 0</span>
+        <span id="blurred">blurred 0</span>
+      </div>
+    </div>
+    <div class="side">
+      <fieldset>
+        <legend>camera</legend>
+        <div class="row" style="margin-bottom:8px"><span style="flex:1">index</span><input type="number" id="index" value="0" min="0" max="9"></div>
+        <div class="row">
+          <button class="primary" id="start">start</button>
+          <button class="danger" id="stop" disabled>stop</button>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>censorship</legend>
+        <label class="line"><input type="checkbox" id="censor" checked> blur detected regions</label>
+        <label class="line"><input type="checkbox" id="boxes" checked> draw boxes and labels</label>
+        <div id="blurLabel">blur strength 301</div>
+        <input type="range" id="blur" min="3" max="301" step="2" value="301">
+        <div id="padLabel">box padding 85 px</div>
+        <input type="range" id="pad" min="0" max="400" value="85">
+        <div id="thrLabel">score threshold 0.25</div>
+        <input type="range" id="thr" min="5" max="95" value="25">
+      </fieldset>
+      <fieldset>
+        <legend>classes to blur</legend>
+        <div class="classes" id="classes"></div>
+      </fieldset>
+    </div>
+  </div>
+  <div class="log">
+    <div class="sub">log</div>
+    <pre id="log"></pre>
+  </div>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+let running = false;
+let timer = null;
+
+async function get(path) {
+  const response = await fetch(path);
+  if (!response.ok) throw new Error(path + " " + response.status);
+  return response.json();
+}
+
+async function post(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body || {})
+  });
+  return response.json();
+}
+
+let pending = null;
+function push(patch) {
+  pending = Object.assign(pending || {}, patch);
+  clearTimeout(push.timer);
+  push.timer = setTimeout(() => {
+    const body = pending;
+    pending = null;
+    post("/settings", body);
+  }, 150);
+}
+
+function drawClasses(all, active) {
+  const holder = $("classes");
+  holder.innerHTML = "";
+  all.forEach((name) => {
+    const label = document.createElement("label");
+    label.className = "line";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.value = name;
+    box.checked = active.indexOf(name) >= 0;
+    box.onchange = () => {
+      const picked = Array.from(holder.querySelectorAll("input")).filter((item) => item.checked).map((item) => item.value);
+      push({ censor_classes: picked });
+    };
+    label.appendChild(box);
+    label.appendChild(document.createTextNode(" " + name.toLowerCase().replace(/_/g, " ")));
+    holder.appendChild(label);
+  });
+}
+
+async function boot() {
+  const info = await get("/info");
+  $("session").textContent = "nudenet detection, automatic blur, session " + info.session;
+  const device = await get("/device");
+  $("device").textContent = "device " + device.device;
+  const health = await get("/health");
+  $("store").textContent = health.database ? "database on" : "database off";
+  const settings = await get("/settings");
+  $("censor").checked = settings.censor_enabled;
+  $("boxes").checked = settings.show_boxes;
+  $("blur").max = settings.blur_max;
+  $("blur").value = settings.blur_strength;
+  $("blurLabel").textContent = "blur strength " + settings.blur_strength;
+  $("pad").value = settings.padding;
+  $("padLabel").textContent = "box padding " + settings.padding + " px";
+  $("thr").value = Math.round(settings.score_threshold * 100);
+  $("thrLabel").textContent = "score threshold " + settings.score_threshold.toFixed(2);
+  drawClasses(settings.all_classes, settings.censor_classes);
+  const status = await get("/camera/status");
+  $("index").value = status.index;
+  if (status.running) attach();
+}
+
+function attach() {
+  running = true;
+  $("feed").src = "/camera/stream?t=" + Date.now();
+  $("feed").style.display = "block";
+  $("placeholder").style.display = "none";
+  $("start").disabled = true;
+  $("stop").disabled = false;
+  $("index").disabled = true;
+}
+
+function detach() {
+  running = false;
+  $("feed").src = "";
+  $("feed").style.display = "none";
+  $("placeholder").style.display = "block";
+  $("placeholder").textContent = "camera is stopped";
+  $("start").disabled = false;
+  $("stop").disabled = true;
+  $("index").disabled = false;
+}
+
+$("start").onclick = async () => {
+  $("start").disabled = true;
+  $("placeholder").textContent = "starting";
+  const result = await post("/camera/start", { index: Number($("index").value) });
+  if (result.running) attach();
+  else {
+    $("start").disabled = false;
+    $("placeholder").textContent = result.detail || "camera failed to start";
+  }
+};
+
+$("stop").onclick = async () => {
+  await post("/camera/stop", {});
+  detach();
+};
+
+$("censor").onchange = () => push({ censor_enabled: $("censor").checked });
+$("boxes").onchange = () => push({ show_boxes: $("boxes").checked });
+$("blur").oninput = () => {
+  $("blurLabel").textContent = "blur strength " + $("blur").value;
+  push({ blur_strength: Number($("blur").value) });
+};
+$("pad").oninput = () => {
+  $("padLabel").textContent = "box padding " + $("pad").value + " px";
+  push({ padding: Number($("pad").value) });
+};
+$("thr").oninput = () => {
+  const value = Number($("thr").value) / 100;
+  $("thrLabel").textContent = "score threshold " + value.toFixed(2);
+  push({ score_threshold: value });
+};
+
+async function poll() {
+  try {
+    const status = await get("/camera/status");
+    $("fps").textContent = "fps " + status.fps.toFixed(1);
+    $("latency").textContent = "latency " + Math.round(status.latency_ms || 0) + " ms";
+    $("persons").textContent = "persons " + (status.persons || 0);
+    $("blurred").textContent = "blurred " + (status.blurred || 0);
+    if (running && !status.running) detach();
+    const lines = await get("/log/tail?limit=120");
+    const view = $("log");
+    const bottom = view.scrollTop + view.clientHeight >= view.scrollHeight - 20;
+    view.textContent = lines.lines.join("\n");
+    if (bottom) view.scrollTop = view.scrollHeight;
+  } catch (error) {
+    $("store").textContent = "api unreachable";
+  }
+}
+
+boot().then(() => {
+  timer = setInterval(poll, 1000);
+  poll();
+});
+</script>
+</body>
+</html>
