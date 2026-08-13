@@ -12,12 +12,12 @@ lands on the region instead of the whole frame.
 Every detected region is grown by 85 px on each side and blurred out. Boxes and labels below are
 drawn for illustration, the API returns clean frames by default.
 
-![single subject](docs/EXAMPLE_1.png)
+<img src="https://mathematiclove.github.io/my-cv/content/projects/REAL_TIME_CENSORSHIP/EXAMPLE_1.png" alt="single subject" width="520">
 
 Two regions on one person, genitalia and breast. The blur box is deliberately larger than the
 detection box, so a moving subject stays covered between frames.
 
-![multiple regions](docs/EXAMPLE_2.png)
+<img src="https://mathematiclove.github.io/my-cv/content/projects/REAL_TIME_CENSORSHIP/EXAMPLE_2.png" alt="multiple regions" width="520">
 
 Three regions on the same person, numbered as one. When a second body enters the frame it becomes
 person 2, and the numbering stays stable while they are visible.
@@ -46,3 +46,5 @@ Use `python main.py live` to open the browser and start the camera in one step.
 | GET | /logs | stored nsfw detections |
 | GET | /stats | totals and live fps |
 | GET | /health | service state |
+
+**by Salimli Ayzek (Салимли Айзек): https://mathematiclove.github.io/my-cv**
