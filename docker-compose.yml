@@ -1,6 +1,6 @@
 services:
   censorship:
-    image: ${IMAGE:-ayzek/real-time-censorship:latest}
+    image: ${IMAGE:-flugmaschine/real-time-censorship:latest}
     build: .
     restart: unless-stopped
     ports:
