@@ -177,25 +177,49 @@ class CameraWorker(threading.Thread):
         self.running = True
         self.started.set()
         self.engine.tracker.reset()
-        while self.running:
-            ok, frame = self.capture.read()
-            if not ok:
-                time.sleep(0.01)
-                continue
-            started = time.time()
-            raw = frame.copy()
-            processed, results = self.engine.process(frame, source="stream", annotate=True)
-            elapsed = time.time() - started
-            with self.lock:
-                self.frame = processed
-                self.raw = raw
-                self.results = results
-                self.latency = elapsed * 1000.0
-                instant = 1.0 / max(elapsed, 0.001)
-                self.fps = instant if self.fps == 0.0 else self.fps * 0.9 + instant * 0.1
-        if self.capture is not None:
-            self.capture.release()
-            self.capture = None
+        failures = 0
+        last_frame_at = time.time()
+        try:
+            while self.running:
+                ok, frame = self.capture.read()
+                if not ok:
+                    if time.time() - last_frame_at > config.CAMERA_READ_TIMEOUT:
+                        self.error = "camera " + str(self.index) + " stopped delivering frames"
+                        log(self.error)
+                        break
+                    time.sleep(0.01)
+                    continue
+                last_frame_at = time.time()
+                started = time.time()
+                raw = frame.copy()
+                try:
+                    processed, results = self.engine.process(frame, source="stream", annotate=True)
+                except Exception as error:
+                    failures += 1
+                    self.error = "frame processing failed: " + str(error)
+                    log(self.error)
+                    if failures >= config.CAMERA_MAX_ERRORS:
+                        log("camera " + str(self.index) + " stopping after " + str(failures) + " consecutive errors")
+                        break
+                    time.sleep(0.05)
+                    continue
+                if failures:
+                    failures = 0
+                    self.error = ""
+                elapsed = time.time() - started
+                with self.lock:
+                    self.frame = processed
+                    self.raw = raw
+                    self.results = results
+                    self.latency = elapsed * 1000.0
+                    instant = 1.0 / max(elapsed, 0.001)
+                    self.fps = instant if self.fps == 0.0 else self.fps * 0.9 + instant * 0.1
+        finally:
+            # Whatever ended the loop, never leave a dead thread flagged as running.
+            self.running = False
+            if self.capture is not None:
+                self.capture.release()
+                self.capture = None
         log("camera " + str(self.index) + " closed")
 
     def stop(self):
