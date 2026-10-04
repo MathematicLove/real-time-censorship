@@ -37,19 +37,24 @@ class Engine:
         log("available devices " + ",".join(available_devices()))
 
     def set_blur_strength(self, value):
-        self.blur.set_strength(value)
+        with self.lock:
+            self.blur.set_strength(value)
 
     def set_padding(self, value):
-        self.padding = max(0, int(value))
+        with self.lock:
+            self.padding = max(0, int(value))
 
     def set_threshold(self, value):
-        self.score_threshold = float(value)
+        with self.lock:
+            self.score_threshold = float(value)
 
     def set_classes(self, classes):
-        self.censor_classes = set(classes)
+        with self.lock:
+            self.censor_classes = set(classes)
 
     def toggle_censor(self, enabled):
-        self.censor_enabled = bool(enabled)
+        with self.lock:
+            self.censor_enabled = bool(enabled)
 
     def _should_store(self, source, person_no, label, now):
         if source != "stream" or config.DB_LOG_INTERVAL <= 0:
@@ -64,6 +69,12 @@ class Engine:
         return True
 
     def process(self, frame, source="stream", tracker=None, annotate=False, store=True):
+        # The camera thread and API request threads share the model session,
+        # the blur kernels and the counters, so one frame is handled at a time.
+        with self.lock:
+            return self._process(frame, source, tracker, annotate, store)
+
+    def _process(self, frame, source, tracker, annotate, store):
         height, width = frame.shape[:2]
         detections = self.detector.detect(frame, score_threshold=self.score_threshold)
         active_tracker = tracker if tracker is not None else self.tracker

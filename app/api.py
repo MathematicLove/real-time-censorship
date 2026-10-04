@@ -6,6 +6,7 @@ import cv2
 from contextlib import asynccontextmanager
 from typing import List, Optional
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse, JSONResponse, FileResponse
 from pydantic import BaseModel, Field
@@ -43,6 +44,15 @@ api.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+async def read_upload(file):
+    limit = int(config.MAX_UPLOAD_MB * 1024 * 1024)
+    payload = await file.read(limit + 1)
+    if len(payload) > limit:
+        raise HTTPException(status_code=413, detail="file too large, limit is " + str(config.MAX_UPLOAD_MB) + " MB")
+    if not payload:
+        raise HTTPException(status_code=400, detail="empty file")
+    return payload
 
 @api.get("/", include_in_schema=False)
 def page():
@@ -111,12 +121,10 @@ def update_settings(payload: Settings):
 @api.post("/detect")
 async def detect(file: UploadFile = File(...), store: bool = Query(default=True)):
     engine = Runtime.get_engine()
-    payload = await file.read()
-    if not payload:
-        raise HTTPException(status_code=400, detail="empty file")
+    payload = await read_upload(file)
     started = time.time()
     try:
-        _, results = engine.process_bytes(payload, source="api", store=store)
+        _, results = await run_in_threadpool(engine.process_bytes, payload, source="api", store=store)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
     return {
@@ -129,11 +137,9 @@ async def detect(file: UploadFile = File(...), store: bool = Query(default=True)
 @api.post("/censor")
 async def censor(file: UploadFile = File(...), quality: int = Query(default=90, ge=30, le=100)):
     engine = Runtime.get_engine()
-    payload = await file.read()
-    if not payload:
-        raise HTTPException(status_code=400, detail="empty file")
+    payload = await read_upload(file)
     try:
-        frame, results = engine.process_bytes(payload, source="api")
+        frame, results = await run_in_threadpool(engine.process_bytes, payload, source="api")
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
     ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)])
